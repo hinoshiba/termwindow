@@ -2,3 +2,6 @@
 /src/
 *.swp
 /pkg/
+Gopkg.toml
+Gopkg.lock
+/vendor/
