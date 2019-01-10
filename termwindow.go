@@ -2,34 +2,99 @@ package termwindow
 
 import (
 	"github.com/nsf/termbox-go"
-	"fmt"
+	"goctx"
+//	"fmt"
 )
 
-func Init() error {
-    if err := termbox.Init(); err != nil {
-    	return err
-    }
-    EvKey = make(chan EVKEY)
-    Error = make(chan error)
-    return nil
+type Wsegm struct {
+	Title chan []byte
+	body  chan []byte
+	zbody chan []byte
+	Msg   chan []byte
+	err   chan error
+}
+
+func newWsegm() Wsegm {
+	var wsegm Wsegm
+	wsegm.Title = make(chan []byte)
+	wsegm.body  = make(chan []byte)
+	wsegm.zbody = make(chan []byte)
+	wsegm.Msg   = make(chan []byte)
+	wsegm.err   = make(chan error)
+	return wsegm
+}
+
+func Init() (Wsegm, error) {
+	if err := termbox.Init(); err != nil {
+		return Wsegm{}, err
+	}
+	EvKey = make(chan EVKEY)
+	return newWsegm(), nil
 }
 
 func Close() error {
-    termbox.Close()
+	termbox.Close()
 	return nil
 }
 
-func Start() error {
-    termbox.Flush()
-    return nil
+func refresh() (int, int) {
+    	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
+	termbox.Flush()
+	return termbox.Size()
 }
 
-const coldef = termbox.ColorDefault
+var EvKey chan EVKEY
 
-func drawLine(x, y int, str string) {
+func Start(wk goctx.Worker, wsegm Wsegm) {
+	w, h := refresh()
+
+	var title []byte
+//	var body  []byte
+	var msg   []byte
+//	var err   error
+	for {
+		select {
+		case <-wk.RecvCancel():
+			wk.Done()
+			return
+		case title = <-wsegm.Title:
+			setTitle(w, title)
+		//case body  = <-wsegm.body:
+	//		setBody(w, h, title)
+		case msg   = <-wsegm.Msg:
+			setMsg(w, h, msg)
+//		case err   = <-wsegm.err:
+	//		setError(w, h, title)
+		case ev := <-EvKey:
+    			drawLine(1, 0, string(ev.Ch) + "", termbox.ColorDefault, termbox.ColorDefault)
+		}
+		termbox.Flush()
+	}
+	return
+}
+
+func setTitle(w int, title []byte) {
+	drawLine(0, w, string(title), termbox.ColorDefault, termbox.ColorRed)
+}
+
+func setMsg(w int, h int, msg []byte) {
+	if h < 1 {
+		return
+	}
+	drawLine(h-1, w, string(msg), termbox.ColorDefault, termbox.ColorRed)
+}
+
+func drawLine(y int, w int,  str string, fg, bg termbox.Attribute) {
 	runes := []rune(str)
 	for i := 0; i < len(runes); i++ {
-		termbox.SetCell(x+i, y, runes[i], termbox.ColorDefault, termbox.ColorDefault)
+		termbox.SetCell(i, y, runes[i], fg, bg)
+	}
+	if len(runes) >= w {
+		return
+	}
+	var space rune
+	for i := w - len(runes); i > 0; i-- {
+		termbox.SetCell(i+len(runes), y, space, fg, bg)
 	}
 }
 
@@ -38,8 +103,14 @@ type EVKEY struct {
 	Ch	rune
 }
 
-func Input() error {
+func Input(wk goctx.Worker) {
 	for {
+		select {
+		case <-wk.RecvCancel():
+			wk.Done()
+			return
+		default:
+		}
 		switch ev := termbox.PollEvent(); ev.Type {
 		case termbox.EventError:
 			Error<-ev.Err
@@ -48,9 +119,13 @@ func Input() error {
 		case termbox.EventKey:
 			switch ev.Key {
 			case termbox.KeyCtrlC:
-				panic("ctrl\n")
+				wk.Cancel()
+				wk.Done()
+				return
 			case termbox.KeyEsc:
-				panic("esc\n")
+				wk.Cancel()
+				wk.Done()
+				return
 			default:
 				EvKey<-EVKEY{Key:ev.Key,Ch:ev.Ch}
 			}
@@ -58,27 +133,13 @@ func Input() error {
 	}
 }
 
-var EvKey chan EVKEY
-func Echo() {
-	for {
-		select {
-		case ev := <-EvKey:
-    			termbox.Clear(coldef, coldef)
-    			drawLine(1, 0, string(ev.Ch) + "")
-    			termbox.Flush()
-		default:
-			continue
-		}
-	}
-}
+
 
 var Error chan error
 func Err() {
 	for {
 		select {
-		case err := <-Error:
-    			termbox.Clear(coldef, coldef)
-    			drawLine(1, 0, fmt.Sprintf("%s",err))
+		case <-Error:
     			termbox.Flush()
 		default:
 			continue
