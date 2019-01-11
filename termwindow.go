@@ -3,15 +3,17 @@ package termwindow
 import (
 	"github.com/nsf/termbox-go"
 	"goctx"
-//	"fmt"
+	"errors"
+	"fmt"
 )
 
 type Wsegm struct {
-	Title chan []byte
-	body  chan []byte
-	zbody chan []byte
-	Msg   chan []byte
-	err   chan error
+	Title   chan []byte
+	body    chan []byte
+	zbody   chan []byte
+	Msg     chan []byte
+	Flush   chan struct{}
+	Err     chan error
 }
 
 func newWsegm() Wsegm {
@@ -20,7 +22,8 @@ func newWsegm() Wsegm {
 	wsegm.body  = make(chan []byte)
 	wsegm.zbody = make(chan []byte)
 	wsegm.Msg   = make(chan []byte)
-	wsegm.err   = make(chan error)
+	wsegm.Flush = make(chan struct{})
+	wsegm.Err   = make(chan error)
 	return wsegm
 }
 
@@ -51,21 +54,28 @@ func Start(wk goctx.Worker, wsegm Wsegm) {
 	var title []byte
 //	var body  []byte
 	var msg   []byte
-//	var err   error
+	var err   error
 	for {
 		select {
 		case <-wk.RecvCancel():
 			wk.Done()
 			return
+		case <-wsegm.Flush:
+			w, h = refresh()
+			setTitle(w, title)
+			setMsg(w, h, msg)
 		case title = <-wsegm.Title:
 			setTitle(w, title)
 		//case body  = <-wsegm.body:
 	//		setBody(w, h, title)
 		case msg   = <-wsegm.Msg:
 			setMsg(w, h, msg)
-//		case err   = <-wsegm.err:
-	//		setError(w, h, title)
+		case err   = <-wsegm.Err:
+			setError(w, h, err)
 		case ev := <-EvKey:
+			if ev.Ch == 'a' {
+				setError(w, h, errors.New("test"))
+			}
     			drawLine(1, 0, string(ev.Ch) + "", termbox.ColorDefault, termbox.ColorDefault)
 		}
 		termbox.Flush()
@@ -74,14 +84,22 @@ func Start(wk goctx.Worker, wsegm Wsegm) {
 }
 
 func setTitle(w int, title []byte) {
-	drawLine(0, w, string(title), termbox.ColorDefault, termbox.ColorRed)
+	drawLine(0, w, string(title), termbox.ColorDefault, termbox.ColorCyan)
 }
 
 func setMsg(w int, h int, msg []byte) {
 	if h < 1 {
 		return
 	}
-	drawLine(h-1, w, string(msg), termbox.ColorDefault, termbox.ColorRed)
+	drawLine(h-1, w, string(msg), termbox.ColorDefault, termbox.ColorCyan)
+}
+
+func setError(w int, h int, err error) {
+	if h < 1 {
+		return
+	}
+	errstr := fmt.Sprintf("Error : %s", err)
+	drawLine(h-1, w, errstr, termbox.ColorRed, termbox.ColorCyan)
 }
 
 func drawLine(y int, w int,  str string, fg, bg termbox.Attribute) {
@@ -93,8 +111,8 @@ func drawLine(y int, w int,  str string, fg, bg termbox.Attribute) {
 		return
 	}
 	var space rune
-	for i := w - len(runes); i > 0; i-- {
-		termbox.SetCell(i+len(runes), y, space, fg, bg)
+	for i := w - len(runes); i >= 0; i-- {
+		termbox.SetCell(i + len(runes), y, space, fg, bg)
 	}
 }
 
@@ -103,7 +121,7 @@ type EVKEY struct {
 	Ch	rune
 }
 
-func Input(wk goctx.Worker) {
+func Input(wk goctx.Worker, flash chan struct{}) {
 	for {
 		select {
 		case <-wk.RecvCancel():
@@ -115,7 +133,8 @@ func Input(wk goctx.Worker) {
 		case termbox.EventError:
 			Error<-ev.Err
 		case termbox.EventResize:
-			termbox.Flush()
+			var ret struct{}
+			flash<-ret
 		case termbox.EventKey:
 			switch ev.Key {
 			case termbox.KeyCtrlC:
