@@ -7,32 +7,55 @@ import (
 	"fmt"
 )
 
-type Wsegm struct {
-	Title   chan []byte
-	body    chan []byte
-	zbody   chan []byte
-	Msg     chan []byte
-	Flush   chan struct{}
-	Err     chan error
+const (
+	WINDOW_TOP int = 0
+	TITLE_HEIGHT int = 1
+	MSG_HEIGHT int = 1
+
+	//TITLE_BG_COLOR = termbox.Attribute(uint16(
+	//TITLE_FG_COLOR = termbox.Attribute(uint16(
+	//MSG_BG_COLOR = termbox.Attribute(uinti16(
+	//MSG_FG_COLOR = termbox.Attribute(uinti16(
+	//ERR_BG_COLOR = termbox.Attribute(uinti16(
+	//ERR_FG_COLOR = termbox.Attribute(uinti16(
+)
+
+type EVKEY struct {
+	Key	termbox.Key
+	Ch	rune
 }
 
-func newWsegm() Wsegm {
-	var wsegm Wsegm
-	wsegm.Title = make(chan []byte)
-	wsegm.body  = make(chan []byte)
-	wsegm.zbody = make(chan []byte)
-	wsegm.Msg   = make(chan []byte)
-	wsegm.Flush = make(chan struct{})
-	wsegm.Err   = make(chan error)
-	return wsegm
+type MenuPropary struct {
+	Active	int//tba uint32
+	Head	int//tba uint32
+	Data	[][]byte
 }
 
-func Init() (Wsegm, error) {
+var (
+	Key		chan EVKEY
+	Title		chan []byte
+	Menu		chan [][]byte
+	ActiveMenu	chan int
+	Body		chan [][]byte
+	Msg		chan []byte
+	Flush		chan struct{}
+	Err		chan error
+)
+
+func Init() error {
 	if err := termbox.Init(); err != nil {
-		return Wsegm{}, err
+		return err
 	}
-	EvKey = make(chan EVKEY)
-	return newWsegm(), nil
+	Key = make(chan EVKEY)
+
+	Title      = make(chan []byte)
+	Menu       = make(chan [][]byte)
+	ActiveMenu = make(chan int)
+	Body       = make(chan [][]byte)
+	Msg        = make(chan []byte)
+	Flush      = make(chan struct{})
+	Err        = make(chan error)
+	return nil
 }
 
 func Close() error {
@@ -46,35 +69,61 @@ func refresh() (int, int) {
 	return termbox.Size()
 }
 
-var EvKey chan EVKEY
 
-func Start(wk goctx.Worker, wsegm Wsegm) {
+
+func Start(wk goctx.Worker) {
 	w, h := refresh()
 
-	var title []byte
-//	var body  []byte
-	var msg   []byte
-	var err   error
+	var title	[]byte
+	var msg		[]byte
+	var menu	MenuPropary
+	var err		error
+
 	for {
 		select {
 		case <-wk.RecvCancel():
 			wk.Done()
 			return
-		case <-wsegm.Flush:
+		case <-Flush:
 			w, h = refresh()
 			setTitle(w, title)
 			setMsg(w, h, msg)
-		case title = <-wsegm.Title:
+			setMenu(w, h, &menu)
+		case title = <-Title:
 			setTitle(w, title)
-		//case body  = <-wsegm.body:
-	//		setBody(w, h, title)
-		case msg   = <-wsegm.Msg:
+		case menu.Data  = <-Menu:
+			menu.Active = 0
+			menu.Head = 0
+			setMenu(w, h, &menu)
+		case menu.Active = <-ActiveMenu:
+			setMenu(w, h, &menu)
+		case msg  = <-Msg:
 			setMsg(w, h, msg)
-		case err   = <-wsegm.Err:
+		case err  = <-Err:
 			setError(w, h, err)
-		case ev := <-EvKey:
+		case ev := <-Key:
 			if ev.Ch == 'a' {
 				setError(w, h, errors.New("test"))
+			}
+			if ev.Ch == 'j' {
+				go func() {
+					ActiveMenu<-menu.Active + 1
+				}()
+			}
+			if ev.Ch == 'k' {
+				go func() {
+					ActiveMenu<-menu.Active - 1
+				}()
+			}
+			if ev.Ch == 'G' {
+				go func() {
+					ActiveMenu<-len(menu.Data) - 1
+				}()
+			}
+			if ev.Ch == 'g' {
+				go func() {
+					ActiveMenu<-0
+				}()
 			}
     			drawLine(1, 0, string(ev.Ch) + "", termbox.ColorDefault, termbox.ColorDefault)
 		}
@@ -84,22 +133,86 @@ func Start(wk goctx.Worker, wsegm Wsegm) {
 }
 
 func setTitle(w int, title []byte) {
-	drawLine(0, w, string(title), termbox.ColorDefault, termbox.ColorCyan)
+	drawLine(WINDOW_TOP, w, string(title), termbox.ColorDefault, termbox.ColorCyan)
 }
 
 func setMsg(w int, h int, msg []byte) {
-	if h < 1 {
+	if h < TITLE_HEIGHT {
 		return
 	}
-	drawLine(h-1, w, string(msg), termbox.ColorDefault, termbox.ColorCyan)
+	drawLine(h - MSG_HEIGHT, w, string(msg), termbox.ColorDefault, termbox.ColorCyan)
+}
+
+func setMenu(w int, h int, menu *MenuPropary) {
+	if menu.Active < 0 {
+		Errp("A actice value outside the range was specified at the menu.")
+		return
+	}
+	if len(menu.Data) - 1 < menu.Active {
+		Errp("A actice value outside the range was specified at the menu.")
+		return
+	}
+	if len(menu.Data) - 1 < menu.Head {
+		Errp("A head value outside the range was specified at the menu.")
+		return
+	}
+
+	max_line := h - MSG_HEIGHT - TITLE_HEIGHT
+	cnt := 0
+
+	if max_line <= menu.Active - menu.Head {
+		menu.Head = menu.Active - max_line + 1
+	}
+	if menu.Head >= menu.Active {
+		menu.Head = menu.Active
+	}
+
+	if menu.Head < 0 {
+		return
+	}
+
+	act := menu.Active - menu.Head
+	Msgp(fmt.Sprintf("head :%v, Active:%v, MaxLine:%v",menu.Head, menu.Active,max_line))
+	for i, d := range menu.Data[menu.Head:] {
+		if i == act {
+			drawLine(cnt + TITLE_HEIGHT, w, string(d), termbox.ColorDefault, termbox.ColorRed)
+		} else {
+			drawLine(cnt + TITLE_HEIGHT, w, string(d), termbox.ColorDefault, termbox.ColorDefault)
+		}
+		cnt++
+		if cnt > max_line {
+			Errp(fmt.Sprintf("cnt:%v",cnt))
+			return
+		}
+	}
+	for ; cnt <= max_line; cnt++ {
+		drawLine(cnt + TITLE_HEIGHT, w, "", termbox.ColorDefault, termbox.ColorDefault)
+	}
+
 }
 
 func setError(w int, h int, err error) {
-	if h < 1 {
+	if h < TITLE_HEIGHT {
+		return
+	}
+	if err == nil {
 		return
 	}
 	errstr := fmt.Sprintf("Error : %s", err)
-	drawLine(h-1, w, errstr, termbox.ColorRed, termbox.ColorCyan)
+	drawLine(h - MSG_HEIGHT, w, errstr, termbox.ColorRed, termbox.ColorCyan)
+}
+
+func Msgp(msg string) {
+	go func() {
+		Msg <- []byte(msg)
+	}()
+}
+
+func Errp(msg string) {
+	err := errors.New(msg)
+	go func() {
+		Err <- err
+	}()
 }
 
 func drawLine(y int, w int,  str string, fg, bg termbox.Attribute) {
@@ -116,12 +229,7 @@ func drawLine(y int, w int,  str string, fg, bg termbox.Attribute) {
 	}
 }
 
-type EVKEY struct {
-	Key	termbox.Key
-	Ch	rune
-}
-
-func Input(wk goctx.Worker, flash chan struct{}) {
+func Input(wk goctx.Worker) {
 	for {
 		select {
 		case <-wk.RecvCancel():
@@ -131,10 +239,10 @@ func Input(wk goctx.Worker, flash chan struct{}) {
 		}
 		switch ev := termbox.PollEvent(); ev.Type {
 		case termbox.EventError:
-			Error<-ev.Err
+			Err <- ev.Err
 		case termbox.EventResize:
 			var ret struct{}
-			flash<-ret
+			Flush <- ret
 		case termbox.EventKey:
 			switch ev.Key {
 			case termbox.KeyCtrlC:
@@ -146,22 +254,8 @@ func Input(wk goctx.Worker, flash chan struct{}) {
 				wk.Done()
 				return
 			default:
-				EvKey<-EVKEY{Key:ev.Key,Ch:ev.Ch}
+				Key<-EVKEY{Key:ev.Key,Ch:ev.Ch}
 			}
-		}
-	}
-}
-
-
-
-var Error chan error
-func Err() {
-	for {
-		select {
-		case <-Error:
-    			termbox.Flush()
-		default:
-			continue
 		}
 	}
 }
