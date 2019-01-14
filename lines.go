@@ -12,6 +12,9 @@ func (self *Lines) Append(id int, data []byte) {
 }
 
 func (self *Lines) GetData(cnt int) (int, []byte){
+	if len (self.Ids) - 1 < cnt || len (self.Data) - 1 < cnt {
+		return 0, []byte{}
+	}
 	return self.Ids[cnt], self.Data[cnt]
 }
 
@@ -38,4 +41,3 @@ func (self *Lines) MvBottom() int {
 	self.Active = len(self.Data) - 1
 	return self.Active
 }
-

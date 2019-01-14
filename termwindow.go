@@ -5,6 +5,8 @@ import (
 	"github.com/hinoshiba/goctx"
 	"errors"
 	"fmt"
+	"strings"
+//	"strconv"
 )
 
 const (
@@ -22,6 +24,55 @@ const (
 	CL_MENU_FG = termbox.ColorDefault
 	CL_MENUACT_BG = termbox.Attribute(uint16(0x08))
 	CL_MENUACT_FG = termbox.Attribute(uint16(0x17))
+)
+
+const (
+	KeyCtrlTilde      termbox.Key = 0x00
+	KeyCtrl2          termbox.Key = 0x00
+	KeyCtrlSpace      termbox.Key = 0x00
+	KeyCtrlA          termbox.Key = 0x01
+	KeyCtrlB          termbox.Key = 0x02
+	KeyCtrlC          termbox.Key = 0x03
+	KeyCtrlD          termbox.Key = 0x04
+	KeyCtrlE          termbox.Key = 0x05
+	KeyCtrlF          termbox.Key = 0x06
+	KeyCtrlG          termbox.Key = 0x07
+	KeyBackspace      termbox.Key = 0x08
+	KeyCtrlH          termbox.Key = 0x08
+	KeyTab            termbox.Key = 0x09
+	KeyCtrlI          termbox.Key = 0x09
+	KeyCtrlJ          termbox.Key = 0x0A
+	KeyCtrlK          termbox.Key = 0x0B
+	KeyCtrlL          termbox.Key = 0x0C
+	KeyEnter          termbox.Key = 0x0D
+	KeyCtrlM          termbox.Key = 0x0D
+	KeyCtrlN          termbox.Key = 0x0E
+	KeyCtrlO          termbox.Key = 0x0F
+	KeyCtrlP          termbox.Key = 0x10
+	KeyCtrlQ          termbox.Key = 0x11
+	KeyCtrlR          termbox.Key = 0x12
+	KeyCtrlS          termbox.Key = 0x13
+	KeyCtrlT          termbox.Key = 0x14
+	KeyCtrlU          termbox.Key = 0x15
+	KeyCtrlV          termbox.Key = 0x16
+	KeyCtrlW          termbox.Key = 0x17
+	KeyCtrlX          termbox.Key = 0x18
+	KeyCtrlY          termbox.Key = 0x19
+	KeyCtrlZ          termbox.Key = 0x1A
+	KeyEsc            termbox.Key = 0x1B
+	KeyCtrlLsqBracket termbox.Key = 0x1B
+	KeyCtrl3          termbox.Key = 0x1B
+	KeyCtrl4          termbox.Key = 0x1C
+	KeyCtrlBackslash  termbox.Key = 0x1C
+	KeyCtrl5          termbox.Key = 0x1D
+	KeyCtrlRsqBracket termbox.Key = 0x1D
+	KeyCtrl6          termbox.Key = 0x1E
+	KeyCtrl7          termbox.Key = 0x1F
+	KeyCtrlSlash      termbox.Key = 0x1F
+	KeyCtrlUnderscore termbox.Key = 0x1F
+	KeySpace          termbox.Key = 0x20
+	KeyBackspace2     termbox.Key = 0x7F
+	KeyCtrl8          termbox.Key = 0x7F
 )
 
 type EVKEY struct {
@@ -203,21 +254,63 @@ func drawWindow(w int, hs int, max_line int, win *window) {
 	}
 
 	for ; cnt < limit; cnt++ {
-		drawLine(cnt + TITLE_HEIGHT, w, "", CL_MENU_FG, CL_MENU_BG)
+		drawLine(cnt + TITLE_HEIGHT, w, " ", CL_MENU_FG, CL_MENU_BG)
 	}
 }
 
 func drawLine(y int, w int,  str string, fg, bg termbox.Attribute) {
+	var wrote int
+	var c_flag = false
+	var c_txt string
+	var c_fg termbox.Attribute
+	var c_bg termbox.Attribute
+
 	runes := []rune(str)
-	for i := 0; i < len(runes); i++ {
-		termbox.SetCell(i, y, runes[i], fg, bg)
+
+	c_fg = fg
+	c_bg = bg
+	for _, rune := range runes {
+		if w < wrote {
+			return
+		}
+		// [38;5;97;48;5;107mtest [0;00m [0m  [38;5;26;48;5;178mtest [0;00m [0m
+		if "\x1b" == string(rune) {
+			c_flag = true
+		}
+		if c_flag {
+			if "m" == string(rune) {
+				c_flag = false
+				c_cls := strings.Split(c_txt, ";")
+				if len(c_cls) < 6 {
+					c_fg = fg
+					c_bg = bg
+					continue
+				} else {
+				c_fg = termbox.ColorBlack
+				c_bg = termbox.ColorWhite
+				}/* else {
+					u_bg, _ := strconv.ParseUint(c_cls[2], 16, 16)
+					c_bg = termbox.Attribute(u_bg)
+					u_fg, _ := strconv.ParseUint(c_cls[5], 16, 16)
+					c_fg = termbox.Attribute(u_fg)
+				}
+				*/
+				c_txt = ""
+			}
+			c_txt += string(rune)
+			continue
+		}
+		termbox.SetCell(wrote, y, rune, c_fg, c_bg)
+		if len([]byte(string(rune))) > 1 {
+			wrote += 2
+			continue
+		}
+		wrote++
 	}
-	if len(runes) >= w {
-		return
-	}
+
 	var space rune
-	for i := w - len(runes); i >= 0; i-- {
-		termbox.SetCell(i + len(runes), y, space, fg, bg)
+	for ; w >= wrote; wrote++ {
+		termbox.SetCell(wrote, y, space, fg, bg)
 	}
 }
 
@@ -304,6 +397,12 @@ func UnsetBody() {
 	}()
 }
 
+func ReFlush() {
+	go func(){
+		var ret struct{}
+		Flush <- ret
+	}()
+}
 
 func msgp(msg string) {
 	go func() {
