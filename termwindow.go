@@ -88,15 +88,15 @@ type windows struct {
 type window struct {
 	Active		int//tba uint32
 	Head		int//tba uint32
-	Data		[][]byte
+	Data		WinData
 }
 
 var (
 	Key		chan EVKEY
 	Title		chan []byte
-	Menu		chan [][]byte
+	Menu		chan WinData
 	ActiveLine	chan int
-	Body		chan [][]byte
+	Body		chan WinData
 	Msg		chan []byte
 	Flush		chan struct{}
 	Err		chan error
@@ -110,9 +110,9 @@ func Init() error {
 	Key = make(chan EVKEY)
 
 	Title      = make(chan []byte)
-	Menu       = make(chan [][]byte)
+	Menu       = make(chan WinData)
 	ActiveLine = make(chan int)
-	Body       = make(chan [][]byte)
+	Body       = make(chan WinData)
 	Msg        = make(chan []byte)
 	Flush      = make(chan struct{})
 	Err        = make(chan error)
@@ -131,6 +131,7 @@ func refresh() (int, int) {
 }
 
 func Start(wk goctx.Worker) {
+	defer wk.Done()
 	w, h := refresh()
 
 	var title	[]byte
@@ -141,7 +142,6 @@ func Start(wk goctx.Worker) {
 	for {
 		select {
 		case <-wk.RecvCancel():
-			wk.Done()
 			return
 		case <-Flush:
 			w, h = refresh()
@@ -171,7 +171,7 @@ func Start(wk goctx.Worker) {
 }
 
 func getAttached(wins *windows) *window {
-	if wins.body.Data != nil {
+	if wins.body.Data.Body != nil {
 		return &wins.body
 	}
 	return &wins.menu
@@ -200,10 +200,10 @@ func drawError(w int, h int, err *error) {
 }
 
 func drawWindows(w int, h int, wins *windows) {
-	if wins.body.Data != nil {
+	if wins.body.Data.Body != nil {
 		hbs := (h - 1) / 2
 		hbe := h - hbs - MSG_HEIGHT - 1
-		drawWindow(w, 0, hbs - 1, &wins.menu)
+		drawWindow(w, 0, hbs, &wins.menu)
 		drawWindow(w, hbs, hbe, &wins.body)
 		return
 	}
@@ -215,19 +215,23 @@ func drawWindow(w int, hs int, max_line int, win *window) {
 		errp("A actice value outside the range was specified at the window.")
 		return
 	}
-	if len(win.Data) - 1 < win.Active {
+	if len(win.Data.Body) - 1 < win.Active {
 		errp("A actice value outside the range was specified at the window.")
 		return
 	}
-	if len(win.Data) - 1 < win.Head {
+	if len(win.Data.Body) - 1 < win.Head {
 		errp("A head value outside the range was specified at the window.")
 		return
 	}
 
-	var cnt int = hs
-
-	if max_line <= win.Active - win.Head {
-		win.Head = win.Active - max_line + 1
+	if win.Data.Title == nil {
+		if max_line <= win.Active - win.Head {
+			win.Head = win.Active - max_line + 1
+		}
+	}else{
+		if max_line - 1 <= win.Active - win.Head {
+			win.Head = win.Active - max_line + 2
+		}
 	}
 	if win.Head >= win.Active {
 		win.Head = win.Active
@@ -236,10 +240,22 @@ func drawWindow(w int, hs int, max_line int, win *window) {
 		return
 	}
 
+
+	var cnt int = hs
+
 	act := win.Active - win.Head
 	limit := max_line + hs
-	//msgp(fmt.Sprintf("head :%v, Active:%v, MaxLine:%v, ColorBG:%v, ColorFG:%v",win.Head, win.Active,max_line, CL_MENUACT_BG, CL_MENUACT_FG))
-	for i, d := range win.Data[win.Head:] {
+	if ! (cnt < limit) {
+		return
+	}
+	if win.Data.Title != nil {
+		drawLine(cnt + TITLE_HEIGHT, w, string(win.Data.Title),
+					CL_TITLE_FG, CL_TITLE_BG)
+	//	msgp(fmt.Sprintf("cnt:%v, head :%v, Active:%v, hs:%v, act:%v, MaxLine:%v, ColorBG:%v, ColorFG:%v",cnt, win.Head, win.Active, hs, act, max_line, CL_MENUACT_BG, CL_MENUACT_FG))
+		cnt++
+	}
+
+	for i, d := range win.Data.Body[win.Head:] {
 		if ! (cnt < limit) {
 			return
 		}
@@ -316,10 +332,10 @@ func drawLine(y int, w int,  str string, fg, bg termbox.Attribute) {
 
 
 func Input(wk goctx.Worker) {
+	defer wk.Done()
 	for {
 		select {
 		case <-wk.RecvCancel():
-			wk.Done()
 			return
 		default:
 		}
@@ -334,12 +350,10 @@ func Input(wk goctx.Worker) {
 			case termbox.KeyCtrlC:
 				errp("canceld")
 				wk.Cancel()
-				wk.Done()
 				return
 			case termbox.KeyEsc:
 				msgp("escaped")
 				wk.Cancel()
-				wk.Done()
 				return
 			default:
 				Key<-EVKEY{Key:ev.Key,Ch:ev.Ch}
@@ -354,15 +368,16 @@ func SetTitle(str string) {
 	}()
 }
 
-func SetMsg(str string) {
+func SetMsg(s string, msg ...interface{}) {
+	str := fmt.Sprintf(s , msg...)
 	go func(){
 		Msg<-[]byte(str)
 	}()
 }
 
-func SetErrStr(str string) {
+func SetErrStr(s string, msg ...interface{}) {
+	err := errors.New(fmt.Sprintf(s , msg...))
 	go func(){
-		err := errors.New(str)
 		Err<-err
 	}()
 }
@@ -379,13 +394,13 @@ func SetActiveLine(i int) {
 	}()
 }
 
-func SetMenu(b [][]byte) {
+func SetMenu(b WinData) {
 	go func(){
 		Menu<-b
 	}()
 }
 
-func SetBody(b [][]byte) {
+func SetBody(b WinData) {
 	go func(){
 		Body<-b
 	}()
@@ -393,7 +408,7 @@ func SetBody(b [][]byte) {
 
 func UnsetBody() {
 	go func(){
-		Body<-nil
+		Body<-WinData{}
 	}()
 }
 
