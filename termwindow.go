@@ -215,11 +215,11 @@ func drawWindow(w int, hs int, max_line int, win *window) {
 		errp("A actice value outside the range was specified at the window.")
 		return
 	}
-	if len(win.Data.Body) - 1 < win.Active {
+	if win.Data.Body != nil && len(win.Data.Body) - 1 < win.Active {
 		errp("A actice value outside the range was specified at the window.")
 		return
 	}
-	if len(win.Data.Body) - 1 < win.Head {
+	if win.Data.Body != nil && len(win.Data.Body) - 1 < win.Head {
 		errp("A head value outside the range was specified at the window.")
 		return
 	}
